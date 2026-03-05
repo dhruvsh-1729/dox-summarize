@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed-config": "node scripts/seed-turso.mjs"
+    "db:seed-config": "node scripts/seed-turso.mjs",
+    "docker:build": "docker build -t dhruvsh/doxsummarize:latest .",
+    "deploy:hostinger": "bash scripts/deploy-hostinger.sh",
+    "deploy:main-docker": "bash scripts/push-main-and-docker.sh"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",
