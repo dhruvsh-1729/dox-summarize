@@ -27,6 +27,30 @@ _engines: dict[str, PaddleOCR] = {}
 DEFAULT_LANG = os.environ.get("PADDLE_OCR_LANG", "en")
 PDF_DPI = int(os.environ.get("PADDLE_OCR_PDF_DPI", "200"))
 
+# Languages supported by PaddleOCR's recognition models (curated, Indic-focused).
+# NOTE: PaddleOCR does not currently ship a Gujarati model.
+SUPPORTED_LANGS = [
+    {"code": "en", "label": "English"},
+    {"code": "hi", "label": "Hindi"},
+    {"code": "sa", "label": "Sanskrit"},
+    {"code": "mr", "label": "Marathi"},
+    {"code": "ne", "label": "Nepali"},
+    {"code": "devanagari", "label": "Devanagari (generic)"},
+    {"code": "ta", "label": "Tamil"},
+    {"code": "te", "label": "Telugu"},
+    {"code": "ka", "label": "Kannada"},
+    {"code": "ar", "label": "Arabic"},
+    {"code": "ur", "label": "Urdu"},
+    {"code": "fa", "label": "Persian"},
+    {"code": "ru", "label": "Russian"},
+    {"code": "ch", "label": "Chinese (Simplified)"},
+    {"code": "chinese_cht", "label": "Chinese (Traditional)"},
+    {"code": "japan", "label": "Japanese"},
+    {"code": "korean", "label": "Korean"},
+    {"code": "latin", "label": "Latin (multi-language)"},
+    {"code": "cyrillic", "label": "Cyrillic (multi-language)"},
+]
+
 
 def get_engine(lang: str) -> PaddleOCR:
     if lang not in _engines:
@@ -57,6 +81,11 @@ def ocr_image_bytes(img_bytes: bytes, lang: str) -> str:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "default_lang": DEFAULT_LANG}
+
+
+@app.get("/languages")
+def languages() -> dict:
+    return {"default": DEFAULT_LANG, "languages": SUPPORTED_LANGS}
 
 
 @app.post("/ocr")

@@ -19,6 +19,8 @@ export type OcrInput = {
   filepath: string;
   mimetype?: string | null;
   originalFilename?: string | null;
+  /** PaddleOCR language code (e.g. "en", "hi", "sa"). Falls back to PADDLE_OCR_LANG. */
+  lang?: string | null;
 };
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".heif", ".tif", ".tiff", ".bmp"];
@@ -63,8 +65,9 @@ async function runPaddleOcr(input: OcrInput): Promise<OcrResult> {
   const form = new FormData();
   const blob = new Blob([new Uint8Array(buffer)], { type: guessMime(input) });
   form.append("file", blob, input.originalFilename ?? "upload");
-  if (process.env.PADDLE_OCR_LANG) {
-    form.append("lang", process.env.PADDLE_OCR_LANG);
+  const lang = (input.lang || process.env.PADDLE_OCR_LANG || "").trim();
+  if (lang) {
+    form.append("lang", lang);
   }
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/ocr`, {

@@ -27,6 +27,8 @@ type ModelInfo = {
   completionPrice?: string;
 };
 
+type OcrLanguage = { code: string; label: string };
+
 type PerModelResult = {
   model: string;
   ok: boolean;
@@ -145,6 +147,9 @@ export default function Home() {
   const [captionInput, setCaptionInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [ocrEngine, setOcrEngine] = useState<OcrEngine>("paddle");
+  const [ocrLanguages, setOcrLanguages] = useState<OcrLanguage[]>([]);
+  const [ocrLang, setOcrLang] = useState("en");
+  const [customLang, setCustomLang] = useState("");
 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -214,6 +219,16 @@ export default function Home() {
       .catch((catalogError: unknown) => {
         setModelCatalogError(catalogError instanceof Error ? catalogError.message : "Model catalog unavailable.");
       });
+
+    fetch("/api/ocr-languages")
+      .then(async (response) => {
+        const payload = (await response.json()) as { languages?: OcrLanguage[]; default?: string };
+        if (response.ok && payload.languages?.length) {
+          setOcrLanguages(payload.languages);
+          setOcrLang((prev) => (payload.languages?.some((l) => l.code === prev) ? prev : payload.default ?? "en"));
+        }
+      })
+      .catch(() => undefined);
   }, [me, loadConfigs]);
 
   /* ----- Sync per-category defaults when category changes ----- */
@@ -276,6 +291,9 @@ export default function Home() {
     formData.append("models", JSON.stringify(selectedModels));
     formData.append("webSearch", webSearch ? "true" : "false");
     formData.append("ocrEngine", ocrEngine);
+    if (ocrEngine === "paddle") {
+      formData.append("ocrLang", (customLang.trim() || ocrLang).toLowerCase());
+    }
     if (file) formData.append("file", file);
     if (linkInput.trim()) formData.append("link", linkInput.trim());
     if (textInput.trim()) formData.append("textInput", textInput.trim());
@@ -501,38 +519,81 @@ export default function Home() {
                   </div>
 
                   {selectedConfig.allowFile ? (
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label htmlFor="upload" className="block text-sm font-semibold">
-                          {selectedConfig.fileLabel || "Upload file"}
-                        </label>
-                        <input
-                          id="upload"
-                          ref={fileInputRef}
-                          type="file"
-                          accept={selectedConfig.fileAccept || "*/*"}
-                          required={selectedConfig.requiresFile}
-                          className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
-                        />
+                    <>
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label htmlFor="upload" className="block text-sm font-semibold">
+                            {selectedConfig.fileLabel || "Upload file"}
+                          </label>
+                          <input
+                            id="upload"
+                            ref={fileInputRef}
+                            type="file"
+                            accept={selectedConfig.fileAccept || "*/*"}
+                            required={selectedConfig.requiresFile}
+                            className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="ocr" className="block text-sm font-semibold">
+                            OCR engine
+                          </label>
+                          <select
+                            id="ocr"
+                            value={ocrEngine}
+                            onChange={(event) => setOcrEngine(event.target.value as OcrEngine)}
+                            className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
+                          >
+                            {OCR_ENGINE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      <div>
-                        <label htmlFor="ocr" className="block text-sm font-semibold">
-                          OCR engine
-                        </label>
-                        <select
-                          id="ocr"
-                          value={ocrEngine}
-                          onChange={(event) => setOcrEngine(event.target.value as OcrEngine)}
-                          className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
-                        >
-                          {OCR_ENGINE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+
+                      {ocrEngine === "paddle" ? (
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <label htmlFor="ocrLang" className="block text-sm font-semibold">
+                              OCR language
+                            </label>
+                            <select
+                              id="ocrLang"
+                              value={ocrLang}
+                              onChange={(event) => {
+                                setOcrLang(event.target.value);
+                                setCustomLang("");
+                              }}
+                              className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
+                            >
+                              {ocrLanguages.map((language) => (
+                                <option key={language.code} value={language.code}>
+                                  {language.label} ({language.code})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label htmlFor="customLang" className="block text-sm font-semibold">
+                              or custom code
+                            </label>
+                            <input
+                              id="customLang"
+                              value={customLang}
+                              onChange={(event) => setCustomLang(event.target.value)}
+                              placeholder="e.g. bn, latin…"
+                              className="mt-2 w-full rounded-2xl border border-black/15 bg-white px-3 py-2 text-sm focus:border-[#8f3f2d] focus:outline-none"
+                            />
+                          </div>
+                          <p className="text-[11px] text-black/50 sm:col-span-2">
+                            PaddleOCR loads a model per language. Note: Gujarati has no PaddleOCR model — use Reducto for
+                            Gujarati.
+                          </p>
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
 
                   {showLink ? (

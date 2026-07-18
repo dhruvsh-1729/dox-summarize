@@ -292,6 +292,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         filepath: file.filepath,
         mimetype: file.mimetype,
         originalFilename: file.originalFilename,
+        lang: fields.ocrLang || undefined,
       });
       if (ocr.text.trim()) {
         contexts.push(`Extracted document text:\n${ocr.text.slice(0, 60000)}`);
