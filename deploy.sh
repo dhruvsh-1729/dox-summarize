@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Redeploy on the server: refresh compose files (if a git checkout), pull the
-# latest images, replace the running containers, and prune dangling images.
+# Run this ON THE SERVER after `ssh`-ing in, from the repo folder:
 #
-# Usage (from the repo dir on the server):
 #   ./deploy.sh
 #
-# Assumes: images already built & pushed to Docker Hub from your dev machine
-# (scripts/build-and-push.sh), and a populated .env sits next to this script.
+# Refreshes compose files, pulls the latest images from Docker Hub, recreates the
+# containers (app + PaddleOCR), waits for health, and prunes old images.
+# Assumes a populated .env sits next to this script.
 set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [ ! -f .env ]; then
+  echo "ERROR: no .env found in $(pwd). Create it (see .env.example) before deploying." >&2
+  exit 1
+fi
+
 # Keep docker-compose.yml / paddle-ocr-service / etc. in sync with GitHub.
 if [ -d .git ]; then
-  git pull --ff-only || echo "git pull skipped/failed — continuing with current files."
+  echo "==> Syncing files from git"
+  git pull --ff-only || echo "   (git pull skipped/failed — continuing with current files.)"
 fi
 
 echo "==> Pulling latest images"
@@ -25,8 +30,18 @@ docker compose down --remove-orphans 2>/dev/null || true
 docker rm -f doxsummarize 2>/dev/null || true
 docker compose up -d
 
+echo "==> Waiting for PaddleOCR to become healthy (up to ~90s)…"
+status="unknown"
+for _ in $(seq 1 30); do
+  status="$(docker inspect -f '{{.State.Health.Status}}' paddle-ocr 2>/dev/null || echo unknown)"
+  [ "$status" = "healthy" ] && break
+  sleep 3
+done
+echo "   paddle-ocr health: $status"
+
 echo "==> Pruning dangling images"
 docker image prune -f
 
-echo "==> Done. Current state:"
+echo
+echo "==> Done. Live at https://doc.aryanculture.org"
 docker compose ps
