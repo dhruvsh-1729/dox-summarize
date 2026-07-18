@@ -1,5 +1,6 @@
 # Pinned to the stable PaddleOCR 2.x API (engine.ocr(..., cls=True)).
-paddlepaddle==2.6.1
+# paddlepaddle 2.6.2 is the oldest wheel currently on PyPI and pairs with paddleocr 2.7.x.
+paddlepaddle==2.6.2
 paddleocr==2.7.3
 numpy<2
 opencv-python-headless
