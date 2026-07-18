@@ -117,7 +117,10 @@ export function verifyToken(token: string): JwtPayload | null {
 
 export function buildSessionCookie(userId: string): string {
   const token = signToken({ sub: userId });
-  const secure = process.env.NODE_ENV === "production" ? " Secure;" : "";
+  // Secure cookies require HTTPS. In production we default to Secure, but allow an
+  // explicit opt-out (COOKIE_INSECURE=true) for testing over plain http:// (e.g. an IP).
+  const useSecure = process.env.NODE_ENV === "production" && process.env.COOKIE_INSECURE !== "true";
+  const secure = useSecure ? " Secure;" : "";
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax;${secure} Max-Age=${SESSION_TTL_SECONDS}`;
 }
 

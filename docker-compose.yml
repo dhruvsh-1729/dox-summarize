@@ -1,4 +1,24 @@
 services:
+  paddle-ocr:
+    image: dhruvsh/paddle-ocr-service:latest
+    container_name: paddle-ocr
+    restart: unless-stopped
+    environment:
+      PADDLE_OCR_LANG: en
+      PADDLE_OCR_PDF_DPI: "200"
+    # Persist downloaded OCR models so they aren't re-fetched on every restart.
+    volumes:
+      - paddle_models:/root/.paddleocr
+    # Not published to the host — only the app reaches it over the internal network.
+    expose:
+      - "8868"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8868/health'); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
   app:
     image: dhruvsh/doxsummarize:latest
     container_name: doxsummarize
@@ -7,3 +27,11 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      # Overrides any PADDLE_OCR_URL in .env — the app reaches the service by name.
+      PADDLE_OCR_URL: http://paddle-ocr:8868
+    depends_on:
+      - paddle-ocr
+
+volumes:
+  paddle_models:
