@@ -1,6 +1,9 @@
 import { type InStatement } from "@libsql/client";
 
 import {
+  DEFAULT_KEYWORD_DELIMITER,
+  DEFAULT_OCR_ENGINE,
+  normalizeKeywordDelimiter,
   sortFields,
   type ArrayItemSchemaType,
   type CategoryConfig,
@@ -27,6 +30,10 @@ const SCHEMA_STATEMENTS = [
       ai_task_prompt TEXT NOT NULL,
       common_format_template TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
+      default_ocr_engine TEXT NOT NULL DEFAULT 'mistral',
+      default_models TEXT NOT NULL DEFAULT '',
+      enable_web_search INTEGER NOT NULL DEFAULT 0,
+      keyword_delimiter TEXT NOT NULL DEFAULT '/',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
@@ -40,6 +47,7 @@ const SCHEMA_STATEMENTS = [
       prompt_description TEXT NOT NULL,
       required INTEGER NOT NULL DEFAULT 1,
       display_order INTEGER NOT NULL DEFAULT 0,
+      is_keyword INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (category_id) REFERENCES category_configs(id) ON DELETE CASCADE,
@@ -48,7 +56,31 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_category_fields_category_order ON category_fields(category_id, display_order, id)`,
 ];
 
+// Additive migrations for databases created before the new columns existed.
+// ALTER TABLE ADD COLUMN throws if the column already exists; those errors are ignored.
+const MIGRATION_STATEMENTS = [
+  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'mistral'`,
+  `ALTER TABLE category_configs ADD COLUMN default_models TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE category_configs ADD COLUMN enable_web_search INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE category_configs ADD COLUMN keyword_delimiter TEXT NOT NULL DEFAULT '/'`,
+  `ALTER TABLE category_fields ADD COLUMN is_keyword INTEGER NOT NULL DEFAULT 0`,
+  // Ensures deleteCategoryConfig can always clean up access rows even before users-store runs.
+  `CREATE TABLE IF NOT EXISTS user_category_access (
+      user_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, category_id)
+    )`,
+];
+
 let schemaReady = false;
+
+function parseModelsList(value: unknown): string[] {
+  return asString(value)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
 
 function asString(value: unknown, fallback = ""): string {
   if (value === null || value === undefined) {
@@ -106,6 +138,15 @@ async function ensureSchema(): Promise<void> {
   const client = getTursoClient();
   const statements: InStatement[] = SCHEMA_STATEMENTS.map((sql) => ({ sql }));
   await client.batch(statements, "write");
+
+  for (const sql of MIGRATION_STATEMENTS) {
+    try {
+      await client.execute(sql);
+    } catch {
+      // Column already exists (older DB already migrated) — safe to ignore.
+    }
+  }
+
   schemaReady = true;
 }
 
@@ -131,6 +172,10 @@ function buildCategoryMap(categoryRows: Array<Record<string, unknown>>): Map<str
       aiTaskPrompt: asString(row.ai_task_prompt),
       commonFormatTemplate: asString(row.common_format_template),
       isActive: asBoolean(row.is_active),
+      defaultOcrEngine: asString(row.default_ocr_engine) || DEFAULT_OCR_ENGINE,
+      defaultModels: parseModelsList(row.default_models),
+      enableWebSearch: asBoolean(row.enable_web_search),
+      keywordDelimiter: normalizeKeywordDelimiter(asString(row.keyword_delimiter) || DEFAULT_KEYWORD_DELIMITER),
       fields: [],
     });
   }
@@ -158,6 +203,7 @@ function attachFields(
       promptDescription: asString(row.prompt_description),
       required: asBoolean(row.required),
       displayOrder: Number(row.display_order ?? 0),
+      isKeyword: asBoolean(row.is_keyword),
     };
 
     category.fields.push(field);
@@ -175,7 +221,8 @@ export async function listCategoryConfigs(): Promise<CategoryConfig[]> {
   const categoryResult = await client.execute(
     `SELECT id, label, description, parser_type, allow_file, requires_file, file_label, file_accept,
             link_field_label, text_field_label, caption_field_label, ai_system_prompt, ai_task_prompt,
-            common_format_template, is_active
+            common_format_template, is_active, default_ocr_engine, default_models, enable_web_search,
+            keyword_delimiter
      FROM category_configs
      WHERE is_active = 1
      ORDER BY label`,
@@ -189,7 +236,7 @@ export async function listCategoryConfigs(): Promise<CategoryConfig[]> {
 
   const fieldResult = await client.execute(
     `SELECT category_id, field_key, field_label, schema_type, item_schema_type, prompt_description,
-            required, display_order
+            required, display_order, is_keyword
      FROM category_fields
      ORDER BY category_id, display_order, id`,
   );
@@ -206,7 +253,8 @@ export async function getCategoryConfigById(id: string): Promise<CategoryConfig 
   const categoryResult = await client.execute({
     sql: `SELECT id, label, description, parser_type, allow_file, requires_file, file_label, file_accept,
                  link_field_label, text_field_label, caption_field_label, ai_system_prompt, ai_task_prompt,
-                 common_format_template, is_active
+                 common_format_template, is_active, default_ocr_engine, default_models, enable_web_search,
+                 keyword_delimiter
           FROM category_configs
           WHERE id = ?
           LIMIT 1`,
@@ -223,7 +271,7 @@ export async function getCategoryConfigById(id: string): Promise<CategoryConfig 
 
   const fieldResult = await client.execute({
     sql: `SELECT category_id, field_key, field_label, schema_type, item_schema_type, prompt_description,
-                 required, display_order
+                 required, display_order, is_keyword
           FROM category_fields
           WHERE category_id = ?
           ORDER BY display_order, id`,
@@ -283,8 +331,9 @@ export async function upsertCategoryConfig(input: CategoryConfigUpdateInput): Pr
       sql: `INSERT INTO category_configs (
               id, label, description, parser_type, allow_file, requires_file, file_label, file_accept,
               link_field_label, text_field_label, caption_field_label, ai_system_prompt, ai_task_prompt,
-              common_format_template, is_active, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+              common_format_template, is_active, default_ocr_engine, default_models, enable_web_search,
+              keyword_delimiter, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               description = excluded.description,
@@ -300,6 +349,10 @@ export async function upsertCategoryConfig(input: CategoryConfigUpdateInput): Pr
               ai_task_prompt = excluded.ai_task_prompt,
               common_format_template = excluded.common_format_template,
               is_active = excluded.is_active,
+              default_ocr_engine = excluded.default_ocr_engine,
+              default_models = excluded.default_models,
+              enable_web_search = excluded.enable_web_search,
+              keyword_delimiter = excluded.keyword_delimiter,
               updated_at = CURRENT_TIMESTAMP`,
       args: [
         input.id,
@@ -317,6 +370,10 @@ export async function upsertCategoryConfig(input: CategoryConfigUpdateInput): Pr
         input.aiTaskPrompt,
         input.commonFormatTemplate,
         input.isActive ? 1 : 0,
+        input.defaultOcrEngine || DEFAULT_OCR_ENGINE,
+        input.defaultModels.join(","),
+        input.enableWebSearch ? 1 : 0,
+        normalizeKeywordDelimiter(input.keywordDelimiter),
       ],
     },
     {
@@ -331,8 +388,8 @@ export async function upsertCategoryConfig(input: CategoryConfigUpdateInput): Pr
     statements.push({
       sql: `INSERT INTO category_fields (
               category_id, field_key, field_label, schema_type, item_schema_type,
-              prompt_description, required, display_order, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              prompt_description, required, display_order, is_keyword, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       args: [
         input.id,
         field.fieldKey,
@@ -342,9 +399,24 @@ export async function upsertCategoryConfig(input: CategoryConfigUpdateInput): Pr
         field.promptDescription,
         field.required ? 1 : 0,
         Number.isFinite(field.displayOrder) ? field.displayOrder : index,
+        field.isKeyword ? 1 : 0,
       ],
     });
   }
 
   await client.batch(statements, "write");
+}
+
+export async function deleteCategoryConfig(id: string): Promise<void> {
+  await ensureSchema();
+
+  const client = getTursoClient();
+  await client.batch(
+    [
+      { sql: `DELETE FROM category_fields WHERE category_id = ?`, args: [id] },
+      { sql: `DELETE FROM user_category_access WHERE category_id = ?`, args: [id] },
+      { sql: `DELETE FROM category_configs WHERE id = ?`, args: [id] },
+    ],
+    "write",
+  );
 }

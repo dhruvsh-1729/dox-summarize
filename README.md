@@ -1,38 +1,44 @@
-# Dynamic Media Extractor (Turso + Reducto + Sarvam)
+# Dynamic Media Extractor
 
-This app now uses **Turso** as the source of truth for:
+A schema-driven document/media extraction app. **Turso** is the source of truth for
+categories, fields, prompts, output templates, users and roles — nothing about a
+category is hardcoded. Files, links, and text are turned into structured rows by
+**multiple AI models at once** (via OpenRouter) so their accuracy can be compared
+side by side.
 
-- category definitions
-- field names
-- schema types
-- per-field prompt descriptions
-- system/task prompts
-- common output template
+## Features
 
-No extraction category is hardcoded in the UI/API flow.
+- **Fully dynamic categories** — create, edit, and delete extraction categories
+  directly in the UI (label, fields, schema types, prompts, output template).
+- **Multi-model extraction (OpenRouter)** — one API key unlocks Claude, GPT, Grok,
+  Gemini, Llama, etc. Pick any number of models and run them concurrently; results
+  are shown in a side-by-side comparison grid you can edit and export.
+- **Web search augmentation** — a per-run toggle (default configurable per category)
+  that enables OpenRouter's `web` plugin so models can ground answers with live search.
+- **Pluggable OCR** — **Mistral OCR** by default (cheap, high accuracy) with **Reducto**
+  available as a premium option. Handles PDFs and images.
+- **Keyword delimiter logic** — mark any field as a *keyword field*; its values are
+  normalized to a single delimiter (`/`, `,`, `-`, … configurable per category).
+- **Authentication + roles** — email/password auth (scrypt + signed JWT cookie) with
+  three roles:
+  - `super_admin` — everything, manages all users.
+  - `admin` — all categories, manages standard users.
+  - `user` — only the categories granted to them; may optionally create categories.
+- **Export** — copy rows (TSV) or download a full model-comparison CSV.
 
-## What Is Dynamic
+## Architecture
 
-For each category you can edit and save:
-
-- `label`, `description`, `parserType`
-- file/link/text/caption input labels
-- `aiSystemPrompt`, `aiTaskPrompt`
-- `commonFormatTemplate` (supports placeholders like `{{matter}}`)
-- field list with:
-  - `fieldKey`
-  - `fieldLabel`
-  - `schemaType` (`string|number|boolean|array`)
-  - `itemSchemaType` for arrays
-  - `promptDescription`
-  - `required`
-
-All of the above is persisted in Turso.
-
-## Database Files
-
-- Schema: `db/schema.sql`
-- Seeder: `scripts/seed-turso.mjs`
+| Concern | Location |
+|---|---|
+| DB schema | `db/schema.sql` (+ additive migrations in stores) |
+| Categories/fields store | `lib/category-config-store.ts` |
+| Users/roles store | `lib/users-store.ts` |
+| Auth (hash, JWT, guards) | `lib/auth.ts` |
+| OpenRouter multi-model | `lib/openrouter.ts` |
+| OCR engines | `lib/ocr.ts` |
+| Shared extraction helpers | `lib/extraction.ts` |
+| API routes | `pages/api/**` |
+| UI | `pages/index.tsx`, `pages/login.tsx`, `pages/admin/users.tsx` |
 
 ## Setup
 
@@ -42,97 +48,50 @@ All of the above is persisted in Turso.
 npm install
 ```
 
-2. Configure env
+2. Configure env (copy `.env.example` → `.env` and fill in)
 
 ```bash
-cp .env.example .env.local
+cp .env.example .env
 ```
 
-Set values in `.env.local`:
+Required keys: `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `TURSO_DB_URL`, `JWT_SECRET`
+(min 16 chars). Optional: `TURSO_AUTH_TOKEN`, `REDUCTO_API_KEY` (only for the Reducto
+OCR option).
 
-```bash
-REDUCTO_API_KEY=...
-REDUCTO_ENVIRONMENT=production
-SARVAM_API_KEY=...
-SARVAM_MODEL=sarvam-m
-TURSO_DB_URL=...
-TURSO_AUTH_TOKEN=... # optional
-```
-
-3. Create/seed Turso config data (from previous hardcoded defaults)
+3. Seed categories + the first super-admin
 
 ```bash
 npm run db:seed-config
 ```
 
-4. Start app
+This applies schema migrations, seeds the built-in categories, and creates a
+super-admin from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (defaults
+`admin@example.com` / `changeme123` — change these). The seed is idempotent and will
+never overwrite an existing admin's password.
+
+4. Start the app
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`.
-
-## Docker (Hostinger / VPS)
-
-### 1. Build image locally
-
-```bash
-npm run docker:build
-```
-
-### 2. Run with Docker Compose in production
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-This expects runtime secrets in `.env` (same keys as `.env.example`).
-
-### 3. One-command deploy pipeline (git + docker push)
-
-```bash
-npm run deploy:hostinger
-```
-
-The deploy script runs:
-
-- `git switch main`
-- `git fetch --all`
-- `git merge origin/main`
-- `git add .`
-- `git commit -m "init"` (only when there are staged changes)
-- `git push origin main`
-- `sudo docker build --pull -t dhruvsh/doxsummarize:latest .`
-- `sudo docker push dhruvsh/doxsummarize:latest`
-- tags and pushes `dhruvsh/doxsummarize:<short_commit_sha>`
-
-You can override defaults when needed:
-
-```bash
-IMAGE_REPO=dhruvsh/doxsummarize IMAGE_TAG=latest COMMIT_MESSAGE=init npm run deploy:hostinger
-```
-
-### 4. Simple main + local build + docker push script
-
-```bash
-npm run deploy:main-docker
-```
-
-Optional flags:
-
-```bash
-COMMIT_MESSAGE="init" IMAGE_REPO=dhruvsh/doxsummarize IMAGE_TAG=latest USE_SUDO_DOCKER=1 npm run deploy:main-docker
-```
+Open `http://localhost:3000`, sign in, and provision more users from **Users**.
 
 ## API Endpoints
 
-- `GET /api/category-configs` -> list active category configs
-- `PUT /api/category-configs` -> update one category config
-- `POST /api/extract` -> run extraction using config from Turso
+- `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me`
+- `GET /api/category-configs` · `PUT /api/category-configs` · `DELETE /api/category-configs?id=`
+- `GET /api/models` — OpenRouter model catalog (cached)
+- `GET/POST /api/users` · `PUT/DELETE /api/users/[id]`
+- `POST /api/extract` — OCR → text → multi-model structured extraction
 
-## Notes
+All endpoints require an authenticated session cookie; category/user management is
+role-gated.
 
-- `newspaper_pdf` uses Reducto `/extract` with JSON schema built dynamically from DB fields.
-- Other parser types use Reducto OCR/parse (where needed) + Sarvam structured extraction.
-- UI includes a built-in config editor section to modify prompts/fields and save back to Turso.
+## Docker (Hostinger / VPS)
+
+```bash
+npm run docker:build
+docker compose -f docker-compose.prod.yml up -d   # expects runtime secrets in .env
+npm run deploy:hostinger                           # git + docker build/push pipeline
+```

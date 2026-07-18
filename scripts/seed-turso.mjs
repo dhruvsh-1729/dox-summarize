@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -448,6 +449,15 @@ function splitSqlStatements(rawSql) {
     .filter(Boolean);
 }
 
+// Additive migrations so an existing (pre-upgrade) Turso DB gains the new columns.
+const MIGRATIONS = [
+  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'mistral'`,
+  `ALTER TABLE category_configs ADD COLUMN default_models TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE category_configs ADD COLUMN enable_web_search INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE category_configs ADD COLUMN keyword_delimiter TEXT NOT NULL DEFAULT '/'`,
+  `ALTER TABLE category_fields ADD COLUMN is_keyword INTEGER NOT NULL DEFAULT 0`,
+];
+
 async function applySchema() {
   const schemaPath = path.resolve(__dirname, "../db/schema.sql");
   const schemaRaw = await readFile(schemaPath, "utf8");
@@ -456,6 +466,47 @@ async function applySchema() {
   if (statements.length) {
     await client.batch(statements, "write");
   }
+
+  for (const sql of MIGRATIONS) {
+    try {
+      await client.execute(sql);
+    } catch {
+      // Column already exists — safe to ignore.
+    }
+  }
+}
+
+// Mirrors lib/auth.ts hashPassword (scrypt) so seeded users can log in.
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16);
+  const derived = crypto.scryptSync(password, salt, 64);
+  return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
+}
+
+async function seedSuperAdmin() {
+  const email = (process.env.SEED_ADMIN_EMAIL ?? "admin@example.com").trim().toLowerCase();
+  const password = process.env.SEED_ADMIN_PASSWORD ?? "changeme123";
+  const name = process.env.SEED_ADMIN_NAME ?? "Super Admin";
+
+  const existing = await client.execute({
+    sql: `SELECT id FROM users WHERE email = ? LIMIT 1`,
+    args: [email],
+  });
+
+  if (existing.rows.length) {
+    console.log(`Super admin already exists (${email}) — leaving password unchanged.`);
+    return;
+  }
+
+  const id = `usr_${crypto.randomBytes(6).toString("hex")}`;
+  await client.execute({
+    sql: `INSERT INTO users (id, email, name, password_hash, role, can_create_categories, is_active)
+          VALUES (?, ?, ?, ?, 'super_admin', 1, 1)`,
+    args: [id, email, name, hashPassword(password)],
+  });
+
+  console.log(`Seeded super admin: ${email} (password: ${password})`);
+  console.log("  → Change this password after first login, or set SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD before seeding.");
 }
 
 async function upsertCategory(category) {
@@ -464,8 +515,9 @@ async function upsertCategory(category) {
       sql: `INSERT INTO category_configs (
               id, label, description, parser_type, allow_file, requires_file, file_label, file_accept,
               link_field_label, text_field_label, caption_field_label, ai_system_prompt, ai_task_prompt,
-              common_format_template, is_active, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+              common_format_template, is_active, default_ocr_engine, default_models, enable_web_search,
+              keyword_delimiter, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               description = excluded.description,
@@ -481,6 +533,10 @@ async function upsertCategory(category) {
               ai_task_prompt = excluded.ai_task_prompt,
               common_format_template = excluded.common_format_template,
               is_active = 1,
+              default_ocr_engine = excluded.default_ocr_engine,
+              default_models = excluded.default_models,
+              enable_web_search = excluded.enable_web_search,
+              keyword_delimiter = excluded.keyword_delimiter,
               updated_at = CURRENT_TIMESTAMP`,
       args: [
         category.id,
@@ -497,6 +553,10 @@ async function upsertCategory(category) {
         category.aiSystemPrompt,
         category.aiTaskPrompt,
         category.commonFormatTemplate,
+        category.defaultOcrEngine ?? "mistral",
+        Array.isArray(category.defaultModels) ? category.defaultModels.join(",") : (category.defaultModels ?? ""),
+        category.enableWebSearch ? 1 : 0,
+        category.keywordDelimiter ?? "/",
       ],
     },
     {
@@ -511,8 +571,8 @@ async function upsertCategory(category) {
     statements.push({
       sql: `INSERT INTO category_fields (
               category_id, field_key, field_label, schema_type, item_schema_type,
-              prompt_description, required, display_order, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              prompt_description, required, display_order, is_keyword, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       args: [
         category.id,
         field.fieldKey,
@@ -522,6 +582,7 @@ async function upsertCategory(category) {
         field.promptDescription,
         field.required ? 1 : 0,
         index,
+        field.isKeyword || /keyword/i.test(field.fieldKey) || /keyword/i.test(field.fieldLabel) ? 1 : 0,
       ],
     });
   }
@@ -537,6 +598,8 @@ async function main() {
   }
 
   console.log(`Seeded ${categories.length} category configs into Turso.`);
+
+  await seedSuperAdmin();
 }
 
 main()
