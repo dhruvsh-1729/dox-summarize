@@ -59,7 +59,7 @@ const PARSER_TYPE_OPTIONS = ["newspaper_pdf", "photo_image", "e_paper_link", "co
 const FIELD_SCHEMA_OPTIONS: FieldSchemaType[] = ["string", "number", "boolean", "array"];
 const ARRAY_ITEM_OPTIONS = ["string", "number", "boolean", "object"] as const;
 const OCR_ENGINE_OPTIONS: { value: OcrEngine; label: string }[] = [
-  { value: "mistral", label: "Mistral OCR (cheap, accurate)" },
+  { value: "paddle", label: "PaddleOCR (free, self-hosted)" },
   { value: "reducto", label: "Reducto (premium)" },
 ];
 
@@ -94,7 +94,7 @@ function blankCategory(id: string): CategoryConfig {
     aiTaskPrompt: "Extract the configured fields from the provided source.",
     commonFormatTemplate: "",
     isActive: true,
-    defaultOcrEngine: "mistral",
+    defaultOcrEngine: "paddle",
     defaultModels: [],
     enableWebSearch: false,
     keywordDelimiter: DEFAULT_KEYWORD_DELIMITER,
@@ -144,7 +144,7 @@ export default function Home() {
   const [textInput, setTextInput] = useState("");
   const [captionInput, setCaptionInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
-  const [ocrEngine, setOcrEngine] = useState<OcrEngine>("mistral");
+  const [ocrEngine, setOcrEngine] = useState<OcrEngine>("paddle");
 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,7 +224,7 @@ export default function Home() {
     }
     setSelectedModels(selectedConfig.defaultModels.length ? selectedConfig.defaultModels : SUGGESTED_MODELS.slice(0, 2));
     setWebSearch(selectedConfig.enableWebSearch);
-    setOcrEngine(selectedConfig.defaultOcrEngine || "mistral");
+    setOcrEngine(selectedConfig.defaultOcrEngine || "paddle");
     if (!isNewCategory) {
       setConfigDraft(cloneConfig(selectedConfig));
     }

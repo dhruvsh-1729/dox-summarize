@@ -1,0 +1,11 @@
+services:
+  paddle-ocr:
+    build: .
+    image: dhruvsh/paddle-ocr-service:latest
+    ports:
+      - "8868:8868"
+    environment:
+      # Default OCR language. Use "en", or Indic scripts like "devanagari" / "gujarati".
+      PADDLE_OCR_LANG: en
+      PADDLE_OCR_PDF_DPI: "200"
+    restart: unless-stopped

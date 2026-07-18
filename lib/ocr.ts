@@ -45,55 +45,44 @@ function guessMime(input: OcrInput): string {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Mistral OCR (default — cheap, high accuracy)                                */
+/* PaddleOCR (default — open-source, self-hosted, zero per-page cost)          */
 /* -------------------------------------------------------------------------- */
 
-async function runMistralOcr(input: OcrInput): Promise<OcrResult> {
-  const apiKey = process.env.MISTRAL_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing MISTRAL_API_KEY in server environment.");
+// Calls the self-hosted PaddleOCR service (see paddle-ocr-service/). The service
+// accepts a multipart file upload and returns extracted text. PDFs are rendered
+// to page images and OCR'd page by page inside the service.
+async function runPaddleOcr(input: OcrInput): Promise<OcrResult> {
+  const baseUrl = process.env.PADDLE_OCR_URL;
+  if (!baseUrl) {
+    throw new Error(
+      "Missing PADDLE_OCR_URL. Start the PaddleOCR service (see paddle-ocr-service/) and set PADDLE_OCR_URL.",
+    );
   }
 
   const buffer = await fsPromises.readFile(input.filepath);
-  const base64 = buffer.toString("base64");
-  const mime = guessMime(input);
-  const dataUri = `data:${mime};base64,${base64}`;
+  const form = new FormData();
+  const blob = new Blob([new Uint8Array(buffer)], { type: guessMime(input) });
+  form.append("file", blob, input.originalFilename ?? "upload");
+  if (process.env.PADDLE_OCR_LANG) {
+    form.append("lang", process.env.PADDLE_OCR_LANG);
+  }
 
-  const document = isImage(input)
-    ? { type: "image_url", image_url: dataUri }
-    : { type: "document_url", document_url: dataUri };
-
-  const response = await fetch("https://api.mistral.ai/v1/ocr", {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/ocr`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.MISTRAL_OCR_MODEL ?? "mistral-ocr-latest",
-      document,
-      include_image_base64: false,
-    }),
+    body: form,
   });
 
   if (!response.ok) {
     const failureText = await response.text();
-    throw new Error(`Mistral OCR error (${response.status}): ${failureText.slice(0, 400)}`);
+    throw new Error(`PaddleOCR error (${response.status}): ${failureText.slice(0, 400)}`);
   }
 
-  const payload = (await response.json()) as {
-    pages?: Array<{ markdown?: string; text?: string }>;
-  };
-
-  const text = (payload.pages ?? [])
-    .map((page) => page.markdown ?? page.text ?? "")
-    .join("\n\n")
-    .trim();
+  const payload = (await response.json()) as { text?: string; numPages?: number };
 
   return {
-    text,
-    engine: "mistral",
-    usage: { numPages: payload.pages?.length },
+    text: (payload.text ?? "").trim(),
+    engine: "paddle",
+    usage: { numPages: payload.numPages },
   };
 }
 
@@ -163,6 +152,6 @@ export async function parseDocument(engine: OcrEngine, input: OcrInput): Promise
   if (engine === "reducto") {
     return runReductoParse(input);
   }
-  // Default to Mistral OCR for everything else.
-  return runMistralOcr(input);
+  // Default to PaddleOCR for everything else (legacy "mistral" values fall through here).
+  return runPaddleOcr(input);
 }

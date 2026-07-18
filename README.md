@@ -15,8 +15,9 @@ side by side.
   are shown in a side-by-side comparison grid you can edit and export.
 - **Web search augmentation** — a per-run toggle (default configurable per category)
   that enables OpenRouter's `web` plugin so models can ground answers with live search.
-- **Pluggable OCR** — **Mistral OCR** by default (cheap, high accuracy) with **Reducto**
-  available as a premium option. Handles PDFs and images.
+- **Pluggable OCR** — **PaddleOCR** by default (free, open-source, self-hosted — see
+  `paddle-ocr-service/`) with **Reducto** available as a premium option. Handles PDFs
+  and images.
 - **Keyword delimiter logic** — mark any field as a *keyword field*; its values are
   normalized to a single delimiter (`/`, `,`, `-`, … configurable per category).
 - **Authentication + roles** — email/password auth (scrypt + signed JWT cookie) with
@@ -54,9 +55,10 @@ npm install
 cp .env.example .env
 ```
 
-Required keys: `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `TURSO_DB_URL`, `JWT_SECRET`
-(min 16 chars). Optional: `TURSO_AUTH_TOKEN`, `REDUCTO_API_KEY` (only for the Reducto
-OCR option).
+Required keys: `OPENROUTER_API_KEY`, `TURSO_DB_URL`, `JWT_SECRET` (min 16 chars), and
+`PADDLE_OCR_URL` pointing at the PaddleOCR service (start it from `paddle-ocr-service/`
+— `docker compose up -d`). Optional: `TURSO_AUTH_TOKEN`, `REDUCTO_API_KEY` (only for the
+Reducto OCR option).
 
 3. Seed categories + the first super-admin
 

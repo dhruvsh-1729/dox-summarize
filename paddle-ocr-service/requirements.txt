@@ -1,0 +1,10 @@
+# Pinned to the stable PaddleOCR 2.x API (engine.ocr(..., cls=True)).
+paddlepaddle==2.6.1
+paddleocr==2.7.3
+numpy<2
+opencv-python-headless
+pillow
+PyMuPDF
+fastapi
+uvicorn[standard]
+python-multipart

@@ -30,7 +30,7 @@ const SCHEMA_STATEMENTS = [
       ai_task_prompt TEXT NOT NULL,
       common_format_template TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
-      default_ocr_engine TEXT NOT NULL DEFAULT 'mistral',
+      default_ocr_engine TEXT NOT NULL DEFAULT 'paddle',
       default_models TEXT NOT NULL DEFAULT '',
       enable_web_search INTEGER NOT NULL DEFAULT 0,
       keyword_delimiter TEXT NOT NULL DEFAULT '/',
@@ -59,7 +59,7 @@ const SCHEMA_STATEMENTS = [
 // Additive migrations for databases created before the new columns existed.
 // ALTER TABLE ADD COLUMN throws if the column already exists; those errors are ignored.
 const MIGRATION_STATEMENTS = [
-  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'mistral'`,
+  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'paddle'`,
   `ALTER TABLE category_configs ADD COLUMN default_models TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE category_configs ADD COLUMN enable_web_search INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE category_configs ADD COLUMN keyword_delimiter TEXT NOT NULL DEFAULT '/'`,

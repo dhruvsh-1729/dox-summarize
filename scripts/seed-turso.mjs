@@ -451,7 +451,7 @@ function splitSqlStatements(rawSql) {
 
 // Additive migrations so an existing (pre-upgrade) Turso DB gains the new columns.
 const MIGRATIONS = [
-  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'mistral'`,
+  `ALTER TABLE category_configs ADD COLUMN default_ocr_engine TEXT NOT NULL DEFAULT 'paddle'`,
   `ALTER TABLE category_configs ADD COLUMN default_models TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE category_configs ADD COLUMN enable_web_search INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE category_configs ADD COLUMN keyword_delimiter TEXT NOT NULL DEFAULT '/'`,
@@ -473,6 +473,13 @@ async function applySchema() {
     } catch {
       // Column already exists — safe to ignore.
     }
+  }
+
+  // Move any categories still pointing at the removed Mistral engine to PaddleOCR.
+  try {
+    await client.execute(`UPDATE category_configs SET default_ocr_engine = 'paddle' WHERE default_ocr_engine = 'mistral'`);
+  } catch {
+    // Column may not exist yet on a brand-new DB — safe to ignore.
   }
 }
 
@@ -553,7 +560,7 @@ async function upsertCategory(category) {
         category.aiSystemPrompt,
         category.aiTaskPrompt,
         category.commonFormatTemplate,
-        category.defaultOcrEngine ?? "mistral",
+        category.defaultOcrEngine ?? "paddle",
         Array.isArray(category.defaultModels) ? category.defaultModels.join(",") : (category.defaultModels ?? ""),
         category.enableWebSearch ? 1 : 0,
         category.keywordDelimiter ?? "/",

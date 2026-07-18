@@ -12,7 +12,7 @@ export type FieldSchemaType = "string" | "number" | "boolean" | "array";
 
 export type ArrayItemSchemaType = "string" | "number" | "boolean" | "object";
 
-export type OcrEngine = "mistral" | "reducto" | string;
+export type OcrEngine = "paddle" | "reducto" | string;
 
 export type CategoryFieldConfig = {
   fieldKey: string;
@@ -54,7 +54,7 @@ export type CategoryConfig = {
 };
 
 export const DEFAULT_KEYWORD_DELIMITER = "/";
-export const DEFAULT_OCR_ENGINE: OcrEngine = "mistral";
+export const DEFAULT_OCR_ENGINE: OcrEngine = "paddle";
 
 /** Normalizes a user-provided delimiter to a single, safe character. */
 export function normalizeKeywordDelimiter(value: string | undefined | null): string {
