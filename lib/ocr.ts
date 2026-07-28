@@ -5,9 +5,15 @@ import Reducto from "reductoai";
 
 import { type OcrEngine } from "@/lib/category-config";
 
+export type OcrPage = {
+  pageNumber: number;
+  text: string;
+};
+
 export type OcrResult = {
   text: string;
   engine: OcrEngine;
+  pages?: OcrPage[];
   usage?: {
     numPages?: number;
     credits?: number | null;
@@ -46,6 +52,111 @@ function guessMime(input: OcrInput): string {
   return "image/jpeg";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asPositiveInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function firstPositiveInteger(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = asPositiveInteger(value);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function pageNumberFromRecord(record: Record<string, unknown>): number | null {
+  const metadata = isRecord(record.metadata) ? record.metadata : {};
+  const pageRange = isRecord(record.page_range) ? record.page_range : {};
+  const metadataPageRange = isRecord(metadata.page_range) ? metadata.page_range : {};
+
+  return firstPositiveInteger(
+    record.pageNumber,
+    record.page_number,
+    record.page,
+    record.pageIndex,
+    record.page_index,
+    metadata.pageNumber,
+    metadata.page_number,
+    metadata.page,
+    metadata.pageIndex,
+    metadata.page_index,
+    pageRange.page,
+    pageRange.start,
+    pageRange.from,
+    metadataPageRange.page,
+    metadataPageRange.start,
+    metadataPageRange.from,
+  );
+}
+
+function normalizeOcrPages(value: unknown): OcrPage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return null;
+      }
+
+      const pageNumber = pageNumberFromRecord(entry);
+      const text = typeof entry.text === "string" ? entry.text.trim() : "";
+
+      if (!pageNumber || !text) {
+        return null;
+      }
+
+      return { pageNumber, text };
+    })
+    .filter((entry): entry is OcrPage => Boolean(entry))
+    .sort((a, b) => a.pageNumber - b.pageNumber);
+}
+
+function collectPagesFromChunks(chunks: unknown[]): OcrPage[] {
+  const pageText = new Map<number, string[]>();
+
+  for (const chunk of chunks) {
+    if (!isRecord(chunk)) {
+      continue;
+    }
+
+    const text = typeof chunk.content === "string" ? chunk.content.trim() : "";
+    const pageNumber = pageNumberFromRecord(chunk);
+
+    if (!text || !pageNumber) {
+      continue;
+    }
+
+    const existing = pageText.get(pageNumber) ?? [];
+    existing.push(text);
+    pageText.set(pageNumber, existing);
+  }
+
+  return [...pageText.entries()]
+    .map(([pageNumber, chunksForPage]) => ({ pageNumber, text: chunksForPage.join("\n\n").trim() }))
+    .filter((page) => page.text)
+    .sort((a, b) => a.pageNumber - b.pageNumber);
+}
+
 /* -------------------------------------------------------------------------- */
 /* PaddleOCR (default — open-source, self-hosted, zero per-page cost)          */
 /* -------------------------------------------------------------------------- */
@@ -80,11 +191,13 @@ async function runPaddleOcr(input: OcrInput): Promise<OcrResult> {
     throw new Error(`PaddleOCR error (${response.status}): ${failureText.slice(0, 400)}`);
   }
 
-  const payload = (await response.json()) as { text?: string; numPages?: number };
+  const payload = (await response.json()) as { text?: string; numPages?: number; pages?: unknown };
+  const pages = normalizeOcrPages(payload.pages);
 
   return {
     text: (payload.text ?? "").trim(),
     engine: "paddle",
+    ...(pages.length ? { pages } : {}),
     usage: { numPages: payload.numPages },
   };
 }
@@ -127,21 +240,27 @@ async function runReductoParse(input: OcrInput): Promise<OcrResult> {
   }
 
   let text = "";
+  let pages: OcrPage[] = [];
 
   if (parseResponse.result.type === "full") {
-    text = parseResponse.result.chunks.map((chunk) => chunk.content).join("\n\n");
+    const chunks = parseResponse.result.chunks;
+    text = chunks.map((chunk) => chunk.content).join("\n\n");
+    pages = collectPagesFromChunks(chunks as unknown[]);
   } else {
     const remote = await fetch(parseResponse.result.url);
     if (!remote.ok) {
       throw new Error(`Could not fetch parse URL result (${remote.status}).`);
     }
     const remoteJson = (await remote.json()) as { chunks?: Array<{ content?: string }> };
-    text = (remoteJson.chunks ?? []).map((chunk) => chunk.content ?? "").join("\n\n");
+    const chunks = remoteJson.chunks ?? [];
+    text = chunks.map((chunk) => chunk.content ?? "").join("\n\n");
+    pages = collectPagesFromChunks(chunks);
   }
 
   return {
     text,
     engine: "reducto",
+    ...(pages.length ? { pages } : {}),
     usage: { numPages: parseResponse.usage.num_pages, credits: parseResponse.usage.credits },
     jobId: parseResponse.job_id,
   };

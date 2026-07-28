@@ -36,9 +36,9 @@ const categories = [
     textFieldLabel: "",
     captionFieldLabel: "",
     aiSystemPrompt:
-      "You are given a 2-page newspaper article PDF. Page 1 has newspaper metadata and page 2 has the target article. Source can be English, Hindi, or Gujarati. Return output in English while preserving original names. Keywords must be proper nouns, ideally in the pattern: Person/Org (Designation, Location).",
+      "You are given a 2-page newspaper article PDF. Page 1 has newspaper metadata and page 2 has the target article. Source can be English, Hindi, or Gujarati. Return output in English while preserving original names. Use page 2 only for article title, matter, photo description, author/editor, statement maker, keywords, and summary. Use page 1 only for explicit metadata such as newspaper name, date, subtype, and edition when page 2 does not repeat it. Keywords must be proper nouns, ideally in the pattern: Person/Org (Designation, Location).",
     aiTaskPrompt:
-      "Extract all configured fields from the document. For keywords, keep only proper nouns with role/designation/location when available.",
+      "Extract all configured fields from the document. Article fields must come only from page 2; do not use any page 1 headline, article text, or photo caption for them. Capture the edition only when it is explicitly printed in the newspaper metadata or masthead; do not infer it. For keywords, keep only proper nouns with role/designation/location when available from page 2.",
     commonFormatTemplate:
       "Matter - {{subtype_of_doc}} by {{newspaper_name}} titled {{title_of_article}} dated {{date}}",
     fields: [
@@ -47,7 +47,7 @@ const categories = [
         fieldLabel: "Newspaper name",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Newspaper name fetched from the first page of the PDF.",
+        promptDescription: "Newspaper name from explicit page 1 metadata or page 2 if repeated.",
         required: true,
       },
       {
@@ -55,7 +55,7 @@ const categories = [
         fieldLabel: "Date",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Publication date.",
+        promptDescription: "Publication date from explicit page 1 metadata or page 2 if repeated.",
         required: true,
       },
       {
@@ -63,7 +63,7 @@ const categories = [
         fieldLabel: "Language",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Language used in the newspaper/article.",
+        promptDescription: "Language used in the page 2 target article.",
         required: true,
       },
       {
@@ -71,7 +71,7 @@ const categories = [
         fieldLabel: "Subtype of doc",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Subtype such as newspaper, e-newspaper, article, blog, etc.",
+        promptDescription: "Subtype such as newspaper, e-newspaper, article, blog, etc. from explicit newspaper metadata.",
         required: true,
       },
       {
@@ -79,7 +79,8 @@ const categories = [
         fieldLabel: "Edition",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Edition value if available.",
+        promptDescription:
+          "Edition value only when explicitly printed in the page 1 metadata/masthead or page 2. Do not infer from locations or headlines.",
         required: true,
       },
       {
@@ -87,7 +88,7 @@ const categories = [
         fieldLabel: "Page numbers",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Page number reference from the newspaper.",
+        promptDescription: "Target article page number reference visible on page 2.",
         required: true,
       },
       {
@@ -95,7 +96,7 @@ const categories = [
         fieldLabel: "Author/Editor",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Name of article author/editor from the second page.",
+        promptDescription: "Name of article author/editor from page 2 only.",
         required: true,
       },
       {
@@ -103,7 +104,7 @@ const categories = [
         fieldLabel: "Title of Article",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Article title from the second page.",
+        promptDescription: "Article title/headline from page 2 only. Ignore page 1 headlines.",
         required: true,
       },
       {
@@ -111,7 +112,7 @@ const categories = [
         fieldLabel: "Matter",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Main article text from the second page in English.",
+        promptDescription: "Main article text from page 2 only in English.",
         required: true,
       },
       {
@@ -119,7 +120,7 @@ const categories = [
         fieldLabel: "Photo Description",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Short description of image if present in article.",
+        promptDescription: "Short description of image/visual present with the page 2 target article only.",
         required: true,
       },
       {
@@ -127,7 +128,7 @@ const categories = [
         fieldLabel: "Statement maker person",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Individual/organization making notable statement in article.",
+        promptDescription: "Individual/organization making a notable statement in the page 2 target article only.",
         required: true,
       },
       {
@@ -136,7 +137,7 @@ const categories = [
         schemaType: "array",
         itemSchemaType: "string",
         promptDescription:
-          "Proper noun tags only. Include person/organization plus designation and location if available.",
+          "Proper noun tags from page 2 only. Include person/organization plus designation and location if available.",
         required: true,
       },
       {
@@ -144,7 +145,7 @@ const categories = [
         fieldLabel: "Summary",
         schemaType: "string",
         itemSchemaType: null,
-        promptDescription: "Short summary of extracted article matter.",
+        promptDescription: "Short summary of the page 2 target article matter only.",
         required: true,
       },
     ],

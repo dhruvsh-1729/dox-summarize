@@ -95,21 +95,27 @@ async def ocr(file: UploadFile = File(...), lang: str | None = Form(None)) -> di
     name = (file.filename or "").lower()
     is_pdf = file.content_type == "application/pdf" or name.endswith(".pdf")
 
-    pages_text: list[str] = []
+    pages_text: list[dict[str, int | str]] = []
 
     if is_pdf:
         doc = fitz.open(stream=data, filetype="pdf")
         num_pages = doc.page_count
-        for page in doc:
+        for page_index, page in enumerate(doc):
             pixmap = page.get_pixmap(dpi=PDF_DPI)
-            pages_text.append(ocr_image_bytes(pixmap.tobytes("png"), lang))
+            pages_text.append(
+                {
+                    "pageNumber": page_index + 1,
+                    "text": ocr_image_bytes(pixmap.tobytes("png"), lang),
+                }
+            )
         doc.close()
     else:
         num_pages = 1
-        pages_text.append(ocr_image_bytes(data, lang))
+        pages_text.append({"pageNumber": 1, "text": ocr_image_bytes(data, lang)})
 
     return {
-        "text": "\n\n".join(t for t in pages_text if t).strip(),
+        "text": "\n\n".join(page["text"] for page in pages_text if page["text"]).strip(),
+        "pages": pages_text,
         "numPages": num_pages,
         "engine": "paddle",
         "lang": lang,

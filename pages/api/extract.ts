@@ -13,7 +13,7 @@ import {
 } from "@/lib/category-config";
 import { getCategoryConfigById } from "@/lib/category-config-store";
 import { getSessionUser, userCanAccessCategory } from "@/lib/auth";
-import { parseDocument, type OcrResult } from "@/lib/ocr";
+import { isPdf, parseDocument, type OcrResult } from "@/lib/ocr";
 import { runModels, type ModelRunResult } from "@/lib/openrouter";
 
 type PerModelResult = {
@@ -57,6 +57,30 @@ const IMAGE_MIME_TYPES = new Set([
 ]);
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".heif", ".tif", ".tiff", ".bmp"];
+const DOCUMENT_CONTEXT_CHAR_LIMIT = 60000;
+const NEWSPAPER_PAGE_CHAR_LIMIT = 30000;
+
+const NEWSPAPER_PAGE_2_FIELD_KEYS = new Set([
+  "author_editor",
+  "title_of_article",
+  "matter",
+  "photo_description",
+  "statement_maker_person",
+  "keywords",
+  "summary",
+]);
+
+const NEWSPAPER_METADATA_FIELD_KEYS = new Set(["newspaper_name", "date", "subtype_of_doc", "edition"]);
+
+const NEWSPAPER_PDF_MODEL_RULES = [
+  "Newspaper PDF source rules:",
+  "The uploaded document is expected to be exactly a 2-page newspaper PDF.",
+  "Use PAGE 2 ONLY for title_of_article, matter, photo_description, author_editor, statement_maker_person, keywords, and summary.",
+  "Never use a PAGE 1 headline, article body, or photo caption for those PAGE 2 article fields.",
+  "Use PAGE 1 only for explicit metadata such as newspaper_name, date, subtype_of_doc, and edition when PAGE 2 does not repeat it.",
+  "Edition must be an explicit newspaper edition or masthead value. Do not infer edition from an article location, headline, or topic.",
+  "page_numbers must refer to the target article's printed page number on PAGE 2 when visible; otherwise use \"Not available\".",
+].join("\n");
 
 /* -------------------------------------------------------------------------- */
 /* Multipart parsing                                                           */
@@ -237,6 +261,129 @@ function parseBoolField(raw: string | undefined, fallback: boolean): boolean {
   return raw === "true" || raw === "1" || raw.toLowerCase() === "on";
 }
 
+function isNewspaperPdfCategory(category: CategoryConfig): boolean {
+  return category.id === "newspaper_pdf" || category.parserType === "newspaper_pdf";
+}
+
+function clipText(value: string, limit: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= limit) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, limit)}\n[Truncated to ${limit} characters]`;
+}
+
+function getOcrPageText(ocr: OcrResult, pageNumber: number): string {
+  return ocr.pages?.find((page) => page.pageNumber === pageNumber)?.text.trim() ?? "";
+}
+
+function appendPrompt(base: string, addition: string): string {
+  return [base.trim(), addition.trim()].filter(Boolean).join("\n\n");
+}
+
+function applyNewspaperPdfRules(category: CategoryConfig): CategoryConfig {
+  if (!isNewspaperPdfCategory(category)) {
+    return category;
+  }
+
+  return {
+    ...category,
+    aiSystemPrompt: appendPrompt(category.aiSystemPrompt, NEWSPAPER_PDF_MODEL_RULES),
+    aiTaskPrompt: appendPrompt(
+      category.aiTaskPrompt,
+      "Extract article fields only from PAGE 2. Use PAGE 1 only for explicit newspaper metadata, especially edition.",
+    ),
+    fields: category.fields.map((field) => {
+      if (NEWSPAPER_PAGE_2_FIELD_KEYS.has(field.fieldKey)) {
+        return {
+          ...field,
+          promptDescription: appendPrompt(
+            field.promptDescription,
+            "Source restriction: use PAGE 2 only for this field. If PAGE 2 does not contain it, use \"Not available\".",
+          ),
+        };
+      }
+
+      if (field.fieldKey === "edition") {
+        return {
+          ...field,
+          promptDescription: appendPrompt(
+            field.promptDescription,
+            "Source restriction: capture only an explicit newspaper edition/masthead value from PAGE 1 or PAGE 2. Do not infer it.",
+          ),
+        };
+      }
+
+      if (field.fieldKey === "page_numbers") {
+        return {
+          ...field,
+          promptDescription: appendPrompt(
+            field.promptDescription,
+            "Source restriction: use the target article's printed page number from PAGE 2 when visible.",
+          ),
+        };
+      }
+
+      if (NEWSPAPER_METADATA_FIELD_KEYS.has(field.fieldKey)) {
+        return {
+          ...field,
+          promptDescription: appendPrompt(
+            field.promptDescription,
+            "Source restriction: use explicit newspaper metadata from PAGE 1 only when PAGE 2 does not provide this value.",
+          ),
+        };
+      }
+
+      return field;
+    }),
+  };
+}
+
+function buildNewspaperPdfContext(ocr: OcrResult, fileName?: string | null): string {
+  const numPages = ocr.usage?.numPages;
+
+  if (numPages !== undefined && numPages !== 2) {
+    throw new Error(`Newspaper PDF extraction expects exactly 2 pages; OCR found ${numPages}.`);
+  }
+
+  if (!ocr.pages?.length) {
+    throw new Error(
+      "Newspaper PDF extraction requires page-level OCR output. Rebuild/restart the PaddleOCR service image so it returns page text.",
+    );
+  }
+
+  const page1 = getOcrPageText(ocr, 1);
+  const page2 = getOcrPageText(ocr, 2);
+
+  if (!page2) {
+    throw new Error("Newspaper PDF extraction requires OCR text from page 2.");
+  }
+
+  return [
+    "Extracted newspaper PDF text:",
+    fileName ? `Uploaded file: ${fileName}` : "",
+    "PAGE 1 (METADATA ONLY - use only for explicit newspaper metadata such as newspaper name, date, subtype, and edition):",
+    page1 ? clipText(page1, NEWSPAPER_PAGE_CHAR_LIMIT) : "Not available",
+    "PAGE 2 (TARGET ARTICLE - use ONLY this page for title_of_article, matter, photo_description, author_editor, statement_maker_person, keywords, and summary):",
+    clipText(page2, NEWSPAPER_PAGE_CHAR_LIMIT),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildDocumentContext(category: CategoryConfig, ocr: OcrResult, fileName?: string | null): string | null {
+  if (isNewspaperPdfCategory(category)) {
+    return buildNewspaperPdfContext(ocr, fileName);
+  }
+
+  if (!ocr.text.trim()) {
+    return null;
+  }
+
+  return `Extracted document text:\n${clipText(ocr.text, DOCUMENT_CONTEXT_CHAR_LIMIT)}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Handler                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -275,6 +422,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return;
     }
 
+    if (
+      file &&
+      isNewspaperPdfCategory(category) &&
+      !isPdf({ filepath: file.filepath, mimetype: file.mimetype, originalFilename: file.originalFilename })
+    ) {
+      throw new Error("Newspaper PDF extraction requires a PDF upload.");
+    }
+
     const models = parseModelsField(fields.models ?? "", category.defaultModels);
     if (!models.length) {
       throw new Error("Select at least one AI model, or set default models on this category.");
@@ -294,8 +449,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         originalFilename: file.originalFilename,
         lang: fields.ocrLang || undefined,
       });
-      if (ocr.text.trim()) {
-        contexts.push(`Extracted document text:\n${ocr.text.slice(0, 60000)}`);
+      const documentContext = buildDocumentContext(category, ocr, file.originalFilename);
+      if (documentContext) {
+        contexts.push(documentContext);
       }
     }
 
@@ -316,8 +472,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     /* -------- Run all selected models concurrently -------- */
+    const modelCategory = applyNewspaperPdfRules(category);
     const runResults = await runModels(models, {
-      category,
+      category: modelCategory,
       context: contexts.join("\n\n"),
       webSearch,
     });
