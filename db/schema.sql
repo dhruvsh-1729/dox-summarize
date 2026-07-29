@@ -60,3 +60,60 @@ CREATE TABLE IF NOT EXISTS user_category_access (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id, category_id)
 );
+
+CREATE TABLE IF NOT EXISTS extraction_runs (
+  id TEXT PRIMARY KEY,
+  category_id TEXT NOT NULL,
+  category_label TEXT NOT NULL DEFAULT '',
+  user_id TEXT,
+  file_name TEXT,
+  models TEXT NOT NULL DEFAULT '',
+  web_search INTEGER NOT NULL DEFAULT 0,
+  ocr_engine TEXT,
+  ocr_pages INTEGER,
+  ocr_credits REAL,
+  ocr_job_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_runs_category_created
+ON extraction_runs(category_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS extraction_model_outputs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  ok INTEGER NOT NULL DEFAULT 0,
+  row_json TEXT NOT NULL DEFAULT '',
+  common_format TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  usage_json TEXT NOT NULL DEFAULT '',
+  latency_ms INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES extraction_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_model_outputs_run
+ON extraction_model_outputs(run_id, id);
+
+CREATE TABLE IF NOT EXISTS extraction_field_values (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  category_label TEXT NOT NULL DEFAULT '',
+  field_key TEXT NOT NULL,
+  field_label TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  value TEXT NOT NULL DEFAULT '',
+  normalized_value TEXT NOT NULL DEFAULT '',
+  is_available INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES extraction_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_field_values_category_field_created
+ON extraction_field_values(category_id, field_key, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_field_values_suggestions
+ON extraction_field_values(category_id, field_key, is_available, normalized_value);

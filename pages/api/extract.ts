@@ -13,6 +13,7 @@ import {
 } from "@/lib/category-config";
 import { getCategoryConfigById } from "@/lib/category-config-store";
 import { getSessionUser, userCanAccessCategory } from "@/lib/auth";
+import { saveExtractionHistory } from "@/lib/extraction-history-store";
 import { isPdf, parseDocument, type OcrResult } from "@/lib/ocr";
 import { runModels, type ModelRunResult } from "@/lib/openrouter";
 
@@ -488,6 +489,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       usage: result.usage,
       latencyMs: result.latencyMs,
     }));
+
+    await saveExtractionHistory({
+      category,
+      userId: user.id,
+      fileName: file?.originalFilename ?? null,
+      models,
+      webSearch,
+      ocr: ocr
+        ? { engine: ocr.engine, numPages: ocr.usage?.numPages, credits: ocr.usage?.credits, jobId: ocr.jobId }
+        : undefined,
+      results,
+    });
 
     res.status(200).json({
       categoryId: category.id,

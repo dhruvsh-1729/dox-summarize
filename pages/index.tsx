@@ -1,6 +1,6 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AppNav from "@/components/AppNav";
 import {
@@ -48,6 +48,16 @@ type ExtractResponse = {
   webSearch: boolean;
   fileName?: string | null;
 };
+
+type FieldValueSuggestion = {
+  fieldKey: string;
+  fieldLabel: string;
+  value: string;
+  usageCount: number;
+  latestAt: string;
+};
+
+type FieldValueSuggestionMap = Record<string, FieldValueSuggestion[]>;
 
 type RunState = {
   fileName: string;
@@ -123,6 +133,92 @@ function escapeCsv(value: string): string {
   return `"${sanitize(value).replaceAll('"', '""')}"`;
 }
 
+function isUnavailableCellValue(value: string | undefined): boolean {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[.]+$/g, "");
+  return !normalized || ["not available", "n/a", "na", "none", "null", "-"].includes(normalized);
+}
+
+function clipSuggestion(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > 220 ? `${collapsed.slice(0, 220)}...` : collapsed;
+}
+
+function SearchableValueTextarea({
+  value,
+  onChange,
+  rows,
+  suggestions,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  rows: number;
+  suggestions: FieldValueSuggestion[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const shouldSuggest = isUnavailableCellValue(value) && suggestions.length > 0;
+  const filteredSuggestions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const source = normalizedQuery
+      ? suggestions.filter((suggestion) => suggestion.value.toLowerCase().includes(normalizedQuery))
+      : suggestions;
+
+    return source.slice(0, 10);
+  }, [query, suggestions]);
+
+  return (
+    <div
+      className="min-w-[240px]"
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        rows={rows}
+        className="w-full resize-y rounded-lg border border-black/10 bg-white px-2 py-1.5 text-sm leading-5 focus:border-[#8f3f2d] focus:outline-none"
+      />
+      {shouldSuggest && open ? (
+        <div className="mt-1 rounded-lg border border-[#1e3f52]/20 bg-white p-1.5 shadow-[0_14px_38px_-28px_rgba(15,23,42,0.55)]">
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search saved values..."
+            className="w-full rounded-md border border-black/10 px-2 py-1 text-xs focus:border-[#8f3f2d] focus:outline-none"
+          />
+          <div className="mt-1 max-h-36 overflow-auto">
+            {filteredSuggestions.length ? (
+              filteredSuggestions.map((suggestion) => (
+                <button
+                  key={`${suggestion.fieldKey}-${suggestion.value}`}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    onChange(suggestion.value);
+                    setQuery("");
+                    setOpen(false);
+                  }}
+                  className="block w-full rounded-md px-2 py-1.5 text-left text-xs leading-4 text-black/80 hover:bg-[#ecf4fa]"
+                  title={suggestion.value}
+                >
+                  {clipSuggestion(suggestion.value)}
+                </button>
+              ))
+            ) : (
+              <div className="px-2 py-1.5 text-xs text-black/45">No saved value matches.</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /* --------------------------------- Page ----------------------------------- */
 
 export default function Home() {
@@ -157,6 +253,7 @@ export default function Home() {
 
   const [run, setRun] = useState<RunState | null>(null);
   const [editedRows, setEditedRows] = useState<Record<string, RowData>>({});
+  const [fieldSuggestions, setFieldSuggestions] = useState<FieldValueSuggestionMap>({});
 
   const [configDraft, setConfigDraft] = useState<CategoryConfig | null>(null);
   const [isNewCategory, setIsNewCategory] = useState(false);
@@ -206,6 +303,22 @@ export default function Home() {
     }
   }, []);
 
+  const loadFieldSuggestions = useCallback(async (id: string) => {
+    if (!id) {
+      setFieldSuggestions({});
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/field-value-suggestions?category=${encodeURIComponent(id)}`);
+      const payload = (await response.json()) as { suggestions?: FieldValueSuggestionMap; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Could not load saved values.");
+      setFieldSuggestions(payload.suggestions ?? {});
+    } catch {
+      setFieldSuggestions({});
+    }
+  }, []);
+
   useEffect(() => {
     if (!me) return;
     void loadConfigs();
@@ -230,6 +343,15 @@ export default function Home() {
       })
       .catch(() => undefined);
   }, [me, loadConfigs]);
+
+  useEffect(() => {
+    if (!selectedConfig?.id) {
+      setFieldSuggestions({});
+      return;
+    }
+
+    void loadFieldSuggestions(selectedConfig.id);
+  }, [selectedConfig?.id, loadFieldSuggestions]);
 
   /* ----- Sync per-category defaults when category changes ----- */
   useEffect(() => {
@@ -322,6 +444,7 @@ export default function Home() {
 
       const okCount = success.results.filter((r) => r.ok).length;
       setNote(`Completed: ${okCount}/${success.results.length} models returned results.`);
+      void loadFieldSuggestions(success.categoryId);
     } catch (runError: unknown) {
       setError(runError instanceof Error ? runError.message : "Extraction failed.");
     } finally {
@@ -803,11 +926,11 @@ export default function Home() {
                             {run.results.map((result) => (
                               <td key={`${result.model}-${field.fieldKey}`} className="border border-black/10 p-1.5 align-top">
                                 {result.ok ? (
-                                  <textarea
+                                  <SearchableValueTextarea
                                     value={editedRows[result.model]?.[field.fieldKey] ?? ""}
-                                    onChange={(event) => updateCell(result.model, field.fieldKey, event.target.value)}
+                                    onChange={(value) => updateCell(result.model, field.fieldKey, value)}
                                     rows={field.fieldKey.toLowerCase().includes("matter") || field.fieldKey.toLowerCase().includes("summary") ? 5 : 2}
-                                    className="w-full min-w-[240px] resize-y rounded-lg border border-black/10 bg-white px-2 py-1.5 text-sm leading-5 focus:border-[#8f3f2d] focus:outline-none"
+                                    suggestions={fieldSuggestions[field.fieldKey] ?? []}
                                   />
                                 ) : (
                                   <div className="min-w-[240px] rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">
