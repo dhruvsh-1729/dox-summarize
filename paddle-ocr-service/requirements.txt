@@ -2,7 +2,14 @@
 # paddlepaddle 2.6.2 is the oldest wheel currently on PyPI and pairs with paddleocr 2.7.x.
 paddlepaddle==2.6.2
 paddleocr==2.7.3
-numpy<2
+numpy==1.26.4
+# scipy/scikit-image must be pinned to the numpy-1.x ABI builds. Left unpinned,
+# pip resolves scipy>=1.16 (compiled against numpy 2.x) against the numpy<2 pin
+# above, and PaddleOCR dies at import with:
+#   ValueError: All ufuncs must have type `numpy.ufunc`
+# These are the versions running in the known-good production image.
+scipy==1.15.3
+scikit-image==0.25.2
 opencv-python-headless
 pillow
 PyMuPDF
