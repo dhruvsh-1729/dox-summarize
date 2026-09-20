@@ -2,19 +2,25 @@
 # paddlepaddle 2.6.2 is the oldest wheel currently on PyPI and pairs with paddleocr 2.7.x.
 paddlepaddle==2.6.2
 paddleocr==2.7.3
+# The whole numeric stack is held at the late-2023 generation, which is the last
+# one built purely against the numpy 1.x C ABI.
+#
+# Why: on Railway's runtime (not on a normal VPS, where the byte-identical image
+# runs fine) scipy's compiled extensions and the loaded numpy disagree at the C
+# level. scipy 1.15 fails as
+#   ValueError: All ufuncs must have type `numpy.ufunc`   (special/_multiufuncs)
+# and scipy 1.14 fails as
+#   TypeError                                             (interpolate/_fitpack_impl)
+# Both are the same ABI fault wearing different hats. scipy >= 1.14 wheels are
+# built against numpy 2.x headers and rely on the 2.x->1.x back-compat shim;
+# scipy 1.11.4 predates that entirely and is compiled against numpy 1.x directly,
+# so there is no shim to go wrong.
+#
+# paddleocr reaches scipy through skimage.morphology (ppocr e2e_utils imports it
+# unconditionally), so these must import cleanly or PaddleOCR cannot start at all.
 numpy==1.26.4
-# scipy is held below 1.15 deliberately. scipy 1.15 introduced
-# scipy/special/_multiufuncs.py, whose MultiUFunc() constructor asserts every
-# ufunc it wraps isinstance(_, numpy.ufunc). On Railway's runtime that assert
-# fails at import time and PaddleOCR cannot start:
-#   ValueError: All ufuncs must have type `numpy.ufunc`.
-#   Received (<ufunc 'sph_legendre_p'>, ...)
-# The identical image runs fine on the old VPS with scipy 1.15.3, so the trigger
-# is environmental, not a version mismatch -- pinning below 1.15 removes the
-# offending module from the import path entirely rather than relying on it.
-# skimage/paddleocr only need scipy.ndimage, which predates all of this.
-scipy==1.14.1
-scikit-image==0.25.2
+scipy==1.11.4
+scikit-image==0.22.0
 opencv-python-headless
 pillow
 PyMuPDF

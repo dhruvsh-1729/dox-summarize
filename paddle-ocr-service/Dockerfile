@@ -20,6 +20,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout 120 --retries 10 paddlepaddle==2.6.2
 RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements.txt
 
+# Fail the BUILD, not the deploy, if the numeric stack is broken. PaddleOCR
+# reaches scipy via skimage.morphology, so if these three import cleanly the
+# service can start; if they cannot, we find out here instead of in a crash loop.
+RUN python -c "import numpy, scipy.special, scipy.ndimage, scipy.interpolate, skimage.morphology; \
+    print('SMOKE numpy', numpy.__version__, 'scipy', scipy.__version__); \
+    import paddleocr; print('SMOKE paddleocr import OK')"
+
 COPY app.py .
 
 EXPOSE 8868
